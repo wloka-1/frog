@@ -1,0 +1,132 @@
+#!/usr/bin/env node
+// frog CLI: talks to the local frog server from inside a frog terminal.
+//   frog notify [--title T] message     ping this tab (sidebar badge + phone/desktop notification)
+//   frog open <url> [--right|--down]    open a browser tab (or split) next to this terminal
+//   frog edit <file[:line]> [--right|--down]
+//   frog split [right|down]
+//   frog rename <workspace name>
+//   frog hook                           Claude Code hook entrypoint (reads hook JSON on stdin)
+//   frog install-claude-hooks           add Notification/Stop hooks to ~/.claude/settings.json
+const fs = require('fs');
+const path = require('path');
+const os = require('os');
+const http = require('http');
+
+const PORT = process.env.FROG_PORT || 7777;
+const SURFACE = process.env.FROG_SURFACE_ID;
+const [cmd, ...rest] = process.argv.slice(2);
+
+function call(command, args = {}) {
+  return new Promise((resolve) => {
+    const data = JSON.stringify({ cmd: command, surface: SURFACE, args });
+    const req = http.request({ host: '127.0.0.1', port: PORT, path: '/api/cli', method: 'POST', headers: { 'content-type': 'application/json', 'content-length': Buffer.byteLength(data) }, timeout: 3000 }, (res) => {
+      let b = '';
+      res.on('data', (c) => (b += c));
+      res.on('end', () => { try { resolve(JSON.parse(b)); } catch { resolve({ ok: false, error: b }); } });
+    });
+    req.on('error', (e) => resolve({ ok: false, error: e.message }));
+    req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'timeout' }); });
+    req.end(data);
+  });
+}
+
+function flag(name) {
+  const i = rest.indexOf('--' + name);
+  if (i < 0) return undefined;
+  const v = rest[i + 1];
+  rest.splice(i, v && !v.startsWith('--') ? 2 : 1);
+  return v && !v.startsWith('--') ? v : true;
+}
+
+function splitDir() {
+  for (const d of ['right', 'down', 'left', 'up']) if (flag(d)) return d;
+  return undefined;
+}
+
+function readStdin() {
+  return new Promise((resolve) => {
+    if (process.stdin.isTTY) return resolve('');
+    let b = '';
+    process.stdin.on('data', (c) => (b += c));
+    process.stdin.on('end', () => resolve(b));
+    setTimeout(() => resolve(b), 1500);
+  });
+}
+
+async function main() {
+  switch (cmd) {
+    case 'notify': {
+      const title = flag('title');
+      const r = await call('notify', { title, body: rest.join(' ') || 'Needs attention' });
+      if (!r.ok) fail(r.error);
+      break;
+    }
+    case 'open': {
+      const split = splitDir();
+      let url = rest[0] || 'http://localhost:3000';
+      if (/^\d+$/.test(url)) url = 'http://localhost:' + url;
+      else if (!/^https?:\/\//.test(url)) url = (/^(localhost|127\.|\[)/.test(url) ? 'http://' : 'https://') + url;
+      const r = await call('open', { url, split });
+      if (!r.ok) fail(r.error);
+      break;
+    }
+    case 'edit': {
+      const split = splitDir();
+      const [f, line] = (rest[0] || '.').split(':');
+      const r = await call('edit', { file: path.resolve(f), line: line ? +line : undefined, split });
+      if (!r.ok) fail(r.error);
+      break;
+    }
+    case 'split': {
+      const r = await call('split', { dir: rest[0] || 'right' });
+      if (!r.ok) fail(r.error);
+      break;
+    }
+    case 'rename': {
+      await call('rename', { name: rest.join(' ') });
+      break;
+    }
+    case 'hook': {
+      // Claude Code hook: never fail or block Claude.
+      const raw = await readStdin();
+      if (!SURFACE) return;
+      let j = {};
+      try { j = JSON.parse(raw); } catch {}
+      const ev = j.hook_event_name || rest[0];
+      const project = path.basename(j.cwd || process.cwd());
+      if (ev === 'Notification') await call('notify', { title: `Claude · ${project}`, body: j.message || 'Claude needs your input' });
+      else if (ev === 'Stop') await call('notify', { title: `Claude · ${project}`, body: 'Finished — waiting for you' });
+      break;
+    }
+    case 'install-claude-hooks': {
+      const file = path.join(os.homedir(), '.claude', 'settings.json');
+      let s = {};
+      try { s = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+      const command = `"${process.execPath}" "${__filename}" hook`;
+      s.hooks ||= {};
+      for (const ev of ['Notification', 'Stop']) {
+        const list = (s.hooks[ev] ||= []);
+        const present = list.some((g) => (g.hooks || []).some((h) => /frog(\.js)?"? hook/.test(h.command || '')));
+        if (!present) list.push({ hooks: [{ type: 'command', command }] });
+      }
+      fs.mkdirSync(path.dirname(file), { recursive: true });
+      if (fs.existsSync(file)) fs.copyFileSync(file, file + '.bak-frog');
+      fs.writeFileSync(file, JSON.stringify(s, null, 2) + '\n');
+      console.log('Installed frog hooks into', file);
+      break;
+    }
+    case 'status': {
+      console.log(JSON.stringify(await call('status'), null, 2));
+      break;
+    }
+    default:
+      console.log(fs.readFileSync(__filename, 'utf8').split('\n').slice(1, 10).map((l) => l.replace(/^\/\/ ?/, '')).join('\n'));
+  }
+}
+
+function fail(msg) {
+  console.error('frog:', msg || 'failed');
+  process.exit(1);
+}
+
+main();

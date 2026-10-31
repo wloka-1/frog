@@ -1,0 +1,38 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Frog · connect</title>
+<style>
+  body { margin: 0; height: 100vh; display: grid; place-items: center; background: #0d1110; color: #d7e0da; font: 14px -apple-system, "Segoe UI", system-ui, sans-serif; -webkit-app-region: drag; }
+  form { width: min(440px, 90vw); display: grid; gap: 12px; -webkit-app-region: no-drag; }
+  h1 { margin: 0; font-size: 22px; } p { margin: 0; color: #8a978f; line-height: 1.5; }
+  input { font: 15px ui-monospace, Menlo, Consolas, monospace; padding: 11px 12px; border-radius: 9px; border: 1px solid #2a3631; background: #141a17; color: #fff; outline: none; }
+  input:focus { border-color: #4ade80; }
+  button { padding: 11px; border: 0; border-radius: 9px; background: #4ade80; color: #06210f; font-weight: 600; font-size: 15px; cursor: pointer; }
+  code { color: #4ade80; } .err { color: #f87171; min-height: 1.2em; }
+</style></head>
+<body>
+<form id="f">
+  <h1>🐸 Connect to frog</h1>
+  <p>Enter the address of the computer running the frog server. Use <code>http://localhost:7777</code> if it runs on this computer, or its Tailscale name, like <code>http://my-desktop:7777</code>.</p>
+  <input id="url" spellcheck="false" placeholder="http://localhost:7777" autofocus>
+  <div class="err" id="err"></div>
+  <button>Connect</button>
+</form>
+<script>
+  const input = document.getElementById('url');
+  window.frogDesktop.getServer().then((u) => { input.value = u || 'http://localhost:7777'; input.select(); });
+  document.getElementById('f').onsubmit = async (e) => {
+    e.preventDefault();
+    let u = input.value.trim();
+    if (!/^https?:\/\//.test(u)) u = 'http://' + u;
+    if (!/:\d+/.test(u.replace(/^https?:\/\//, ''))) u += ':7777';
+    document.getElementById('err').textContent = 'Connecting…';
+    try {
+      const r = await fetch(u.replace(/\/+$/, '') + '/healthz', { cache: 'no-store' });
+      if (!r.ok) throw new Error('HTTP ' + r.status);
+      window.frogDesktop.setServer(u);
+    } catch (err) {
+      document.getElementById('err').textContent = `Can't reach ${u} (${err.message}). Is the server running and Tailscale on?`;
+    }
+  };
+</script>
+</body></html>

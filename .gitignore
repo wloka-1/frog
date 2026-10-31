@@ -1,0 +1,8 @@
+node_modules/
+web/dist/
+desktop/out/
+.DS_Store
+.claude/
+desktop/out/
+desktop/build/
+*.log

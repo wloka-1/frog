@@ -1,0 +1,25 @@
+{
+  "name": "frog",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "A lightweight terminal workspace you run on one computer and use from anywhere: vertical tabs, splits, browser panes with an element picker for AI coding agents, and phone sync over Tailscale.",
+  "scripts": {
+    "start": "node server/index.js",
+    "setup": "npm install && npm --prefix web install && npm --prefix web run build",
+    "build:web": "npm --prefix web run build",
+    "test": "node test/smoke.mjs",
+    "postinstall": "chmod +x node_modules/node-pty/prebuilds/*/spawn-helper 2>/dev/null || true"
+  },
+  "dependencies": {
+    "@xterm/addon-serialize": "^0.14.0",
+    "@xterm/headless": "^6.0.0",
+    "node-pty": "^1.1.0",
+    "ws": "^8.18.0"
+  },
+  "license": "MIT",
+  "engines": {
+    "node": ">=20"
+  },
+  "devDependencies": {}
+}
