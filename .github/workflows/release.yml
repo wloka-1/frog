@@ -1,0 +1,31 @@
+name: release
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  desktop:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm --prefix desktop install
+      - run: npm --prefix desktop run dist
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+      - name: Upload to release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "See README for setup." || true
+          gh release upload "$GITHUB_REF_NAME" desktop/out/*.dmg desktop/out/*.exe --clobber 2>/dev/null || gh release upload "$GITHUB_REF_NAME" $(ls desktop/out/*.dmg desktop/out/*.exe 2>/dev/null) --clobber
