@@ -5,8 +5,8 @@ import { EditorState, Compartment } from '@codemirror/state';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { searchKeymap, highlightSelectionMatches } from '@codemirror/search';
 import { closeBrackets, autocompletion, closeBracketsKeymap, completionKeymap } from '@codemirror/autocomplete';
-import { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting, defaultHighlightStyle, foldKeymap } from '@codemirror/language';
-import { oneDark } from '@codemirror/theme-one-dark';
+import { bracketMatching, foldGutter, indentOnInput, syntaxHighlighting, HighlightStyle, foldKeymap } from '@codemirror/language';
+import { tags as t } from '@lezer/highlight';
 import { icon } from './icons.js';
 
 const LANGS = {
@@ -32,15 +32,55 @@ const LANGS = {
   sql: () => import('@codemirror/lang-sql').then((m) => m.sql()),
 };
 
+// Colors come from CSS variables set by themes.js, so switching themes restyles
+// open editors without rebuilding them.
 const theme = EditorView.theme({
-  '&': { height: '100%', fontSize: 'var(--editor-font, 13px)', backgroundColor: '#0d1110' },
+  '&': { height: '100%', fontSize: 'var(--editor-font, 13px)', backgroundColor: 'var(--bg)', color: 'var(--fg)' },
   '.cm-scroller': { fontFamily: '"JetBrains Mono", "SF Mono", ui-monospace, Menlo, monospace', lineHeight: '1.5' },
-  '.cm-gutters': { backgroundColor: '#0d1110', borderRight: '1px solid #1c2521', color: '#46534c' },
-  '.cm-activeLine': { backgroundColor: '#141c18' },
-  '.cm-activeLineGutter': { backgroundColor: '#141c18', color: '#9fb0a6' },
-  '&.cm-focused .cm-cursor': { borderLeftColor: '#4ade80' },
-  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground': { backgroundColor: '#2f5a3d !important' },
-}, { dark: true });
+  '.cm-content': { caretColor: 'var(--accent)' },
+  '.cm-gutters': { backgroundColor: 'var(--bg)', borderRight: '1px solid var(--line)', color: 'var(--gutter)' },
+  '.cm-activeLine': { backgroundColor: 'var(--active-line)' },
+  '.cm-activeLineGutter': { backgroundColor: 'var(--active-line)', color: 'var(--gutter-active)' },
+  '.cm-cursor, .cm-dropCursor': { borderLeftColor: 'var(--accent)' },
+  '&.cm-focused .cm-cursor': { borderLeftColor: 'var(--accent)' },
+  '.cm-selectionBackground, &.cm-focused .cm-selectionBackground, .cm-content ::selection': { backgroundColor: 'var(--selection) !important' },
+  '.cm-selectionMatch': { backgroundColor: 'var(--accent-dim)' },
+  '&.cm-focused .cm-matchingBracket': { backgroundColor: 'var(--accent-dim)', outline: '1px solid var(--accent)' },
+  '&.cm-focused .cm-nonmatchingBracket': { color: 'var(--syn-invalid)' },
+  '.cm-searchMatch': { backgroundColor: 'rgba(250,204,21,.25)', outline: '1px solid rgba(250,204,21,.5)' },
+  '.cm-searchMatch.cm-searchMatch-selected': { backgroundColor: 'rgba(250,204,21,.45)' },
+  '.cm-foldPlaceholder': { backgroundColor: 'var(--bg3)', border: '1px solid var(--line2)', color: 'var(--dim)' },
+  '.cm-tooltip': { backgroundColor: 'var(--bg3)', border: '1px solid var(--line2)', color: 'var(--fg)' },
+  '.cm-tooltip-autocomplete > ul > li[aria-selected]': { backgroundColor: 'var(--accent-dim)', color: 'var(--fg)' },
+  '.cm-panels': { backgroundColor: 'var(--bg2)', color: 'var(--fg)' },
+  '.cm-panels.cm-panels-bottom': { borderTop: '1px solid var(--line)' },
+  '.cm-panels.cm-panels-top': { borderBottom: '1px solid var(--line)' },
+  '.cm-textfield': { backgroundColor: 'var(--bg)', border: '1px solid var(--line2)', color: 'var(--fg)', borderRadius: '4px' },
+  '.cm-button': { backgroundImage: 'none', backgroundColor: 'var(--bg3)', border: '1px solid var(--line2)', color: 'var(--fg)', borderRadius: '4px' },
+});
+
+const v = (n) => `var(--syn-${n})`;
+const highlight = HighlightStyle.define([
+  { tag: [t.keyword, t.modifier, t.controlKeyword, t.operatorKeyword, t.definitionKeyword, t.moduleKeyword], color: v('keyword') },
+  { tag: [t.string, t.special(t.string), t.regexp, t.character], color: v('string') },
+  { tag: [t.number, t.bool, t.null, t.atom, t.unit], color: v('number') },
+  { tag: [t.comment, t.lineComment, t.blockComment, t.docComment], color: v('comment'), fontStyle: 'italic' },
+  { tag: [t.function(t.variableName), t.function(t.propertyName), t.macroName], color: v('function') },
+  { tag: [t.typeName, t.className, t.namespace, t.standard(t.variableName)], color: v('type') },
+  { tag: [t.variableName, t.self], color: v('variable') },
+  { tag: [t.definition(t.variableName)], color: v('variable') },
+  { tag: [t.propertyName, t.definition(t.propertyName)], color: v('property') },
+  { tag: [t.operator, t.punctuation, t.bracket, t.separator, t.derefOperator], color: v('operator') },
+  { tag: [t.tagName, t.angleBracket], color: v('tag') },
+  { tag: [t.attributeName], color: v('attr') },
+  { tag: [t.heading], color: v('heading'), fontWeight: 'bold' },
+  { tag: [t.strong], fontWeight: 'bold' },
+  { tag: [t.emphasis], fontStyle: 'italic' },
+  { tag: [t.strikethrough], textDecoration: 'line-through' },
+  { tag: [t.link, t.url], color: v('property'), textDecoration: 'underline' },
+  { tag: [t.meta, t.processingInstruction, t.annotation], color: v('meta') },
+  { tag: [t.invalid], color: v('invalid') },
+]);
 
 async function api(p, opts) {
   const r = await fetch(p, opts);
@@ -102,7 +142,7 @@ export class EditorViewSurface {
         lineNumbers(), highlightActiveLineGutter(), foldGutter(), history(), drawSelection(), dropCursor(),
         EditorState.allowMultipleSelections.of(true), indentOnInput(), bracketMatching(), closeBrackets(),
         autocompletion(), rectangularSelection(), crosshairCursor(), highlightActiveLine(), highlightSelectionMatches(),
-        syntaxHighlighting(defaultHighlightStyle, { fallback: true }), oneDark, theme,
+        syntaxHighlighting(highlight), theme,
         keymap.of([
           { key: 'Mod-s', run: () => { this.save(); return true; } },
           { key: 'Mod-p', run: () => { this.quickOpen(); return true; } },

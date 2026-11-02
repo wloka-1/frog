@@ -9,18 +9,8 @@ import { SearchAddon } from '@xterm/addon-search';
 import { Unicode11Addon } from '@xterm/addon-unicode11';
 import { ClipboardAddon } from '@xterm/addon-clipboard';
 import { IS_MAC } from './icons.js';
+import { termTheme } from './themes.js';
 
-export const THEME = {
-  background: '#0d1110',
-  foreground: '#d7e0da',
-  cursor: '#4ade80',
-  cursorAccent: '#0d1110',
-  selectionBackground: '#2f5a3d',
-  black: '#1b2320', red: '#f87171', green: '#4ade80', yellow: '#facc15',
-  blue: '#60a5fa', magenta: '#c084fc', cyan: '#22d3ee', white: '#d7e0da',
-  brightBlack: '#5b6b63', brightRed: '#fca5a5', brightGreen: '#86efac', brightYellow: '#fde047',
-  brightBlue: '#93c5fd', brightMagenta: '#d8b4fe', brightCyan: '#67e8f9', brightWhite: '#ffffff',
-};
 
 export class TermView {
   constructor(app, surface) {
@@ -50,7 +40,7 @@ export class TermView {
       macOptionIsMeta: true,
       macOptionClickForcesSelection: true,
       scrollback: 10000,
-      theme: THEME,
+      theme: termTheme(),
       cols: this.server.cols,
       rows: this.server.rows,
       smoothScrollDuration: mobile ? 0 : 60,
@@ -231,6 +221,10 @@ export class TermView {
       // Stop streaming tabs nobody is looking at; a snapshot catches us up later.
       this.unsubT = setTimeout(() => this.unsubscribe(), 20000);
     }
+  }
+
+  setTheme(t) {
+    this.term.options.theme = termTheme(t);
   }
 
   setFontSize(n) {

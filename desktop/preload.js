@@ -6,4 +6,5 @@ contextBridge.exposeInMainWorld('frogDesktop', {
   onNotificationClick: (cb) => ipcRenderer.on('notification-click', (_e, id) => cb(id)),
   getServer: () => ipcRenderer.invoke('get-server'),
   setServer: (url) => ipcRenderer.invoke('set-server', url),
+  toggleMaximize: () => ipcRenderer.send('toggle-maximize'),
 });

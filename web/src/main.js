@@ -6,6 +6,9 @@ import { TermView } from './terminal.js';
 import { BrowserView, normalizeUrl } from './browser.js';
 import { EditorViewSurface } from './editor.js';
 import { icon, IS_MAC, kbd, fixKeyLabels } from './icons.js';
+import { THEMES, themeChoice, applyTheme, setTheme, watchSystemTheme, autoPair } from './themes.js';
+
+applyTheme();
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -34,7 +37,7 @@ document.body.innerHTML = `
     <div class="ws-list"></div>
     <div class="sb-foot">
       <span class="conn"><span class="conn-dot"></span><span class="conn-text">connecting</span></span>
-      <button class="ib pair" title="Pair a phone or another computer">${icon('phone')}<span>Pair device</span></button>
+      <span class="sb-foot-btns"><button class="ib pair" title="Pair a phone or another computer">${icon('phone')}<span>Pair device</span></button><button class="ib settings" title="Settings (⌘,)">${icon('gear', 15)}</button></span>
     </div>
     <div class="sb-resize"></div>
   </aside>
@@ -236,7 +239,17 @@ $('.ws-list').addEventListener('drop', (e) => {
 });
 $('.new-ws').onclick = () => newWorkspace();
 $('.pair').onclick = () => pairDialog();
+$('.settings').onclick = () => { document.body.classList.remove('drawer'); settingsDialog(); };
 $('#scrim').onclick = () => document.body.classList.remove('drawer');
+
+// Double-click the header (sidebar top or the empty part of a tab bar) to maximize
+// the window, like a native title bar. Only the desktop shell can resize its window.
+document.addEventListener('dblclick', (e) => {
+  if (app.mobile || !desktopShell) return;
+  const t = e.target;
+  if (t.closest('button, input, [contenteditable="true"], .tab, .pane-actions')) return;
+  if (t.closest('.sb-head, .tabs')) { e.preventDefault(); desktopShell?.toggleMaximize?.(); }
+});
 
 // Sidebar width
 {
@@ -928,7 +941,9 @@ function fuzzy(q, s) {
   return score - s.length * 0.01;
 }
 
-app.palette = ({ placeholder, items, onPick }) => {
+// Items may carry `lead` (trusted HTML before the label) and `badge`. onSelect fires
+// as the highlight moves (for live previews); onCancel when closed without a pick.
+app.palette = ({ placeholder, items, onPick, onSelect, onCancel }) => {
   document.querySelector('.palette-wrap')?.remove();
   const w = document.createElement('div');
   w.className = 'palette-wrap';
@@ -940,11 +955,13 @@ app.palette = ({ placeholder, items, onPick }) => {
     const q = input.value.trim();
     shown = items.map((it) => [fuzzy(q, it.label), it]).filter(([s]) => s > 0).sort((a, b) => b[0] - a[0]).slice(0, 60).map(([, it]) => it);
     sel = Math.min(sel, Math.max(0, shown.length - 1));
-    list.innerHTML = shown.map((it, i) => `<div class="pl-item ${i === sel ? 'sel' : ''}" data-i="${i}">${it.icon ? icon(it.icon, 13) : ''}<span>${esc(it.label)}</span>${it.hint ? `<em>${esc(it.hint)}</em>` : ''}</div>`).join('');
+    list.innerHTML = shown.map((it, i) => `<div class="pl-item ${i === sel ? 'sel' : ''}" data-i="${i}">${it.lead || ''}${it.icon ? icon(it.icon, 13) : ''}<span>${esc(it.label)}</span>${it.badge ? `<b>${esc(it.badge)}</b>` : ''}${it.hint ? `<em>${esc(it.hint)}</em>` : ''}</div>`).join('');
     list.querySelector('.sel')?.scrollIntoView({ block: 'nearest' });
+    if (shown[sel]) onSelect?.(shown[sel]);
   };
-  const close = () => { w.remove(); };
-  const pick = (it) => { close(); it && onPick(it); };
+  let picked = false;
+  const close = () => { w.remove(); if (!picked) onCancel?.(); };
+  const pick = (it) => { picked = !!it; close(); it && onPick(it); };
   input.oninput = () => { sel = 0; draw(); };
   input.onkeydown = (e) => {
     e.stopPropagation();
@@ -976,6 +993,8 @@ function commandPalette() {
     ['Find in terminal', '⌘F', () => findBar(), 'search'],
     ['Bigger text', '⌘=', () => setFont(app.fontSize + 1), 'plus'],
     ['Smaller text', '⌘-', () => setFont(app.fontSize - 1), 'plus'],
+    ['Settings…', '⌘,', () => settingsDialog(), 'gear'],
+    ['Theme…', '', () => themePicker(), 'layers'],
   ];
   for (const w of app.state.workspaces) cmds.push([`Go to workspace: ${w.name}`, '', () => activateWorkspace(w.id), 'layers']);
   app.palette({ placeholder: 'Run a command…', items: cmds.map(([label, hint, run, ic]) => ({ label, hint: kbd(hint), run, icon: ic })), onPick: (it) => it.run() });
@@ -1019,6 +1038,69 @@ function findBar() {
   f.querySelector('.close').onclick = close;
   input.focus();
 }
+
+function settingsDialog() {
+  const card = (id, t, label = t.name) => `<button class="theme-card" data-theme="${id}" style="--c-bg:${t.ui.bg};--c-bg2:${t.ui.bg2};--c-line:${t.ui.line};--c-fg:${t.ui.fg};--c-dim:${t.ui.dim};--c-accent:${t.ui.accent};--c-k:${t.syn.synKeyword};--c-s:${t.syn.synString};--c-f:${t.syn.synFunction}">
+      <span class="tc-preview"><span class="tc-side"><i></i><i></i><i></i></span><span class="tc-code">
+        <span><b style="color:var(--c-k)">const</b> <b style="color:var(--c-f)">hop</b> = <b style="color:var(--c-s)">'ribbit'</b></span>
+        <span><b style="color:var(--c-dim)">$</b> npm run dev</span></span></span>
+      <span class="tc-name">${esc(label)}</span></button>`;
+  const autoCard = () => { const p = autoPair(); const d = THEMES[p.dark], l = THEMES[p.light];
+    return card('auto', { ...d, ui: { ...d.ui, bg2: l.ui.bg, line: l.ui.line2 } }, `Match system · ${d.name} / ${l.name}`); };
+  const group = (dark) => Object.entries(THEMES).filter(([, t]) => t.dark === dark).map(([id, t]) => card(id, t)).join('');
+  const w = sheet({
+    title: 'Settings',
+    body: `<div class="set-section"><div class="set-row-top"><div class="set-label">Theme</div><input class="theme-filter" placeholder="Filter themes" spellcheck="false" autocapitalize="off"></div>
+        <div class="theme-grid auto-slot">${autoCard()}</div>
+        <div class="set-sub">Dark</div><div class="theme-grid">${group(true)}</div>
+        <div class="set-sub">Light</div><div class="theme-grid">${group(false)}</div></div>
+      <div class="set-section set-row"><div><div class="set-label">Text size</div><div class="dim">Terminal and editor · ⌘= / ⌘-</div></div>
+        <div class="stepper"><button class="ib font-dn">−</button><span class="font-val"></span><button class="ib font-up">+</button></div></div>
+      <div class="dim set-note">Saved on this device only, so your phone can look different from your desk.</div>`,
+  });
+  w.querySelector('.sheet').classList.add('settings-sheet');
+  const mark = () => {
+    const cur = themeChoice();
+    for (const b of w.querySelectorAll('.theme-card')) b.classList.toggle('on', b.dataset.theme === cur);
+    w.querySelector('.font-val').textContent = app.fontSize + 'px';
+  };
+  w.querySelector('.settings-sheet').addEventListener('click', (e) => {
+    const b = e.target.closest('.theme-card');
+    if (!b) return;
+    setTheme(b.dataset.theme, app.views.values());
+    w.querySelector('.auto-slot').innerHTML = autoCard(); // the dark/light pair may have changed
+    mark();
+  });
+  const filter = w.querySelector('.theme-filter');
+  filter.oninput = () => {
+    const q = filter.value.trim().toLowerCase();
+    for (const b of w.querySelectorAll('.theme-card')) b.hidden = !!q && !b.textContent.toLowerCase().includes(q);
+    for (const sub of w.querySelectorAll('.set-sub')) sub.hidden = !!q && ![...sub.nextElementSibling.children].some((c) => !c.hidden);
+  };
+  w.querySelector('.font-dn').onclick = () => { setFont(app.fontSize - 1); mark(); };
+  w.querySelector('.font-up').onclick = () => { setFont(app.fontSize + 1); mark(); };
+  mark();
+  w.querySelector('.theme-card.on')?.scrollIntoView({ block: 'nearest' });
+}
+
+function themePicker() {
+  const current = themeChoice();
+  const swatch = (t) => `<span class="pl-swatch">${[t.ui.bg, t.ui.accent, t.syn.synKeyword, t.syn.synString, t.syn.synFunction].map((c) => `<i style="background:${c}"></i>`).join('')}</span>`;
+  const items = [
+    ...Object.entries(THEMES).map(([id, t]) => ({ id, label: t.name, lead: swatch(t) })),
+    { id: 'auto', label: `Match system (${THEMES[autoPair().dark].name} / ${THEMES[autoPair().light].name})`, lead: `<span class="pl-swatch">${[THEMES[autoPair().dark].ui.bg, THEMES[autoPair().dark].ui.accent, THEMES[autoPair().light].ui.bg, THEMES[autoPair().light].ui.accent].map((c) => `<i style="background:${c}"></i>`).join('')}</span>` },
+  ].map((it) => ({ ...it, badge: it.id === current ? 'current' : '' }));
+  // Put the current theme first so the palette opens on it.
+  items.sort((a, b) => (b.id === current) - (a.id === current));
+  app.palette({
+    placeholder: 'Pick a theme (arrows preview)…',
+    items,
+    onSelect: (it) => previewViews(it.id),
+    onPick: (it) => setTheme(it.id, app.views.values()),
+    onCancel: () => setTheme(current, app.views.values()),
+  });
+}
+function previewViews(id) { const t = applyTheme(id); for (const v of app.views.values()) v.setTheme?.(t); }
 
 function setFont(n) {
   app.fontSize = Math.max(8, Math.min(28, n));
@@ -1106,6 +1188,7 @@ function handleKey(e) {
   switch (k) {
     case 't': newSurface('terminal'); return true;
     case 'w': if (sh) closeWorkspace(app.activeWs); else if (app.focused) closeSurface(app.focused); return true;
+    case ',': settingsDialog(); return true;
     case 'n': newWorkspace(); return true;
     case 'd': split(focusedPane()?.id, sh ? 'down' : 'right'); return true;
     case 'b': if (sh) split(focusedPane()?.id, 'right', 'browser'); else newSurface('browser'); return true;
@@ -1176,6 +1259,7 @@ addEventListener('resize', onViewport);
 document.body.classList.toggle('mobile', app.mobile);
 document.body.classList.toggle('desktop-app', !!desktopShell);
 document.documentElement.style.setProperty('--editor-font', app.fontSize + 'px');
+watchSystemTheme(() => app.views.values());
 onViewport();
 
 // Refresh relative times in the sidebar.

@@ -1,6 +1,6 @@
 // Frog desktop: a thin window onto a frog server. The server address lives in
 // ~/.config/frog/desktop.json → { "url": "http://my-mac:7777" }; first run asks for it.
-const { app, BrowserWindow, Menu, Notification, ipcMain, shell, dialog } = require('electron');
+const { app, BrowserWindow, Menu, Notification, ipcMain, shell, dialog, systemPreferences } = require('electron');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
@@ -92,6 +92,15 @@ ipcMain.on('notify', (_e, { title, body, id }) => {
 ipcMain.on('badge', (_e, n) => {
   if (isMac) app.dock?.setBadge(n ? String(n) : '');
   else app.setBadgeCount?.(n || 0);
+});
+// Double-clicking frog's header acts like a native title bar. On macOS honour the
+// system setting (Desktop & Dock → "Double-click a window's title bar to").
+ipcMain.on('toggle-maximize', () => {
+  if (!win || win.isFullScreen()) return;
+  const action = isMac ? systemPreferences.getUserDefault('AppleActionOnDoubleClick', 'string') : 'Maximize';
+  if (action === 'None') return;
+  if (action === 'Minimize') { win.minimize(); return; }
+  win.isMaximized() ? win.unmaximize() : win.maximize();
 });
 ipcMain.handle('get-server', () => config.url || '');
 ipcMain.handle('set-server', (_e, url) => {
