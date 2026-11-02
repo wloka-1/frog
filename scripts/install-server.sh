@@ -2,6 +2,7 @@
 # Install frog as a login agent on this Mac (starts at login, restarts on crash).
 set -e
 DIR="$(cd "$(dirname "$0")/.." && pwd)"
+NODE="$(command -v node)" || { echo "node not found on PATH" >&2; exit 1; }
 PLIST="$HOME/Library/LaunchAgents/dev.frog.server.plist"
 mkdir -p "$HOME/.frog" "$HOME/Library/LaunchAgents"
 [ -f "$HOME/.frog/config.json" ] || echo '{ "allowedLogins": [] }' > "$HOME/.frog/config.json"
@@ -17,7 +18,7 @@ cat > "$PLIST" <<PL
   <key>ThrottleInterval</key><integer>3</integer>
   <key>StandardOutPath</key><string>$HOME/.frog/server.log</string>
   <key>StandardErrorPath</key><string>$HOME/.frog/server.log</string>
-  <key>EnvironmentVariables</key><dict><key>LANG</key><string>en_US.UTF-8</string></dict>
+  <key>EnvironmentVariables</key><dict><key>LANG</key><string>en_US.UTF-8</string><key>FROG_NODE</key><string>$NODE</string></dict>
 </dict></plist>
 PL
 launchctl bootout "gui/$(id -u)/dev.frog.server" 2>/dev/null || true
