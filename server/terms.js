@@ -3,10 +3,17 @@
 import pty from 'node-pty';
 import headless from '@xterm/headless';
 import serialize from '@xterm/addon-serialize';
+import path from 'node:path';
 import { isWin, shellArgs } from './platform.js';
 
 const { Terminal } = headless;
 const { SerializeAddon } = serialize;
+
+// Modes a full-screen program turns on and must turn off when it exits. If it
+// dies without cleaning up (e.g. an ssh session drops), the shell inherits them
+// and every mouse move types escape-code garbage at the prompt.
+const STICKY_RESET = '\x1b[?9l\x1b[?1000l\x1b[?1001l\x1b[?1002l\x1b[?1003l\x1b[?1005l\x1b[?1006l'
+  + '\x1b[?1015l\x1b[?1016l\x1b[?1004l\x1b[?2026l\x1b[?25h';
 
 export class Term {
   constructor({ id, cwd, cols = 120, rows = 32, env, shell, scrollback = 10000, restore, events }) {
@@ -55,6 +62,8 @@ export class Term {
 
     if (restore) this.head.write(restore);
 
+    this.shellName = path.basename(shell).replace(/\.exe$/i, '');
+    this.stickyTimer = null;
     this.pty = pty.spawn(shell, shellArgs(shell), { name: 'xterm-256color', cols, rows, cwd, env });
     this.pid = this.pty.pid;
     this.pty.onData((d) => this.onData(d));
@@ -77,10 +86,36 @@ export class Term {
     // A "burst" is output with no gap over 1.5s; long bursts mean a program is working.
     if (now - this.lastOutputAt > 1500) this.burstStart = now;
     this.lastOutputAt = now;
+    this.emit(d);
+    // Once output stops, check whether the shell is back in front with modes left on.
+    // node-pty only knows the foreground process on Unix; Windows relies on resetStickyModes() from the live poll.
+    if (!isWin && !this.stickyTimer) this.stickyTimer = setTimeout(() => this.checkSticky(), 200);
+  }
+
+  emit(d) {
     this.head.write(d);
     this.pendingOut += d;
     // Coalesce bursts into one frame per ~5ms.
     if (!this.flushTimer) this.flushTimer = setTimeout(() => this.flush(), 5);
+  }
+
+  hasStickyModes() {
+    const m = this.head.modes;
+    return m.mouseTrackingMode !== 'none' || m.sendFocusMode || m.synchronizedOutputMode;
+  }
+
+  checkSticky() {
+    this.stickyTimer = null;
+    if (this.disposed || !this.hasStickyModes()) return;
+    let fg;
+    try { fg = this.pty.process; } catch { return; }
+    if (fg && fg.replace(/^-/, '') === this.shellName) this.resetStickyModes();
+  }
+
+  // Turn off modes left behind by a program that is no longer running.
+  resetStickyModes() {
+    if (this.disposed || !this.hasStickyModes()) return;
+    this.emit(STICKY_RESET);
   }
 
   flush() {
@@ -141,6 +176,7 @@ export class Term {
     this.disposed = true;
     this.exited = true;
     clearTimeout(this.flushTimer);
+    clearTimeout(this.stickyTimer);
     try { isWin ? this.pty.kill() : this.pty.kill('SIGHUP'); } catch {}
     if (!isWin) setTimeout(() => { try { process.kill(this.pid, 'SIGKILL'); } catch {} }, 1500);
     this.head.dispose();

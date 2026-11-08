@@ -293,6 +293,8 @@ async function refreshLiveInner() {
       git: g ? g.branch : null,
       gitRoot: g ? g.root : null,
     };
+    // A program just ended and the shell is in front again: drop modes it left on.
+    if (live[t.id]?.proc && !next.proc) t.resetStickyModes();
     if (JSON.stringify(next) !== JSON.stringify(live[t.id])) { live[t.id] = next; changed = true; }
     // Fallback attention signal for AI agents without hooks: it worked for a
     // while, then went quiet. Hooks/OSC notifications win when present.
